@@ -15,8 +15,11 @@ import (
 
 // SQLQuery represents a configured SQL query.
 type SQLQuery struct {
-	Name       string
-	SQL        string
+	// The Name of the query, part of the URL used to call it.
+	Name string
+	// The SQL function to run.
+	SQL string
+	// Named-parameters the SQL function expects, with their type information.
 	Parameters map[string]bigquery.FieldType
 }
 
@@ -52,6 +55,7 @@ func main() {
 		log.Fatalf("Error connecting to Bigquery: %v", err)
 	}
 
+	// TODO(bamnet): Move this "/query/"" to a config or flag.
 	http.HandleFunc("/query/", queryHandler)
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
@@ -67,11 +71,16 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	values := r.URL.Query()
 	q := bqClient.Query(query.SQL)
+
+	// Add query paramters, if any are configured.
+	values := r.URL.Query()
 	for key, fieldType := range query.Parameters {
 		var v interface{}
 
+		// Types are used to convert the string input into the native type
+		// before being passed to BiqQuery.
+		// TODO(bamnet): Add error handling.
 		switch fieldType {
 		case bigquery.IntegerFieldType:
 			v, _ = strconv.Atoi(values.Get(key))
@@ -89,6 +98,7 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Run the query.
 	it, err := q.Read(ctx)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -104,7 +114,8 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
-
+			w.WriteHeader(http.StatusInternalServerError)
+			log.Printf("BigQuery read error: %v", err)
 		}
 		row := make(map[string]interface{})
 
