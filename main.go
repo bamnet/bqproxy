@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -27,7 +28,7 @@ type SQLQuery struct {
 var sqlQueries = map[string]SQLQuery{
 	"hello-world": {
 		Name: "hello-world",
-		SQL:  "SELECT * FROM UNNEST([(1, -1, 'a', null), (2, 0, 'bravo', 1)]);",
+		SQL:  "SELECT * FROM UNNEST([(1, -1, 'a', null, true, 1.23), (2, 0, 'bravo', 1, false, -2/3)]);",
 	},
 	"param": {
 		Name: "param",
@@ -73,29 +74,13 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 
 	q := bqClient.Query(query.SQL)
 
-	// Add query paramters, if any are configured.
-	values := r.URL.Query()
-	for key, fieldType := range query.Parameters {
-		var v interface{}
-
-		// Types are used to convert the string input into the native type
-		// before being passed to BiqQuery.
-		// TODO(bamnet): Add error handling.
-		switch fieldType {
-		case bigquery.IntegerFieldType:
-			v, _ = strconv.Atoi(values.Get(key))
-		case bigquery.BooleanFieldType:
-			v = (values.Get(key) == "true")
-		case bigquery.FloatFieldType:
-			v, _ = strconv.ParseFloat(values.Get(key), 64)
-		default:
-			v = values.Get(key)
-		}
-
-		q.Parameters = append(q.Parameters, bigquery.QueryParameter{
-			Name:  key,
-			Value: v,
-		})
+	// Add query paramters.
+	var err error
+	q.Parameters, err = buildQueryParams(query.Parameters, r.URL.Query())
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		log.Printf("Error parsing params: %v", err)
+		return
 	}
 
 	// Run the query.
@@ -120,22 +105,7 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 		row := make(map[string]interface{})
 
 		for _, field := range it.Schema {
-			if rawRow[field.Name] == nil {
-				row[field.Name] = nil
-				continue
-			}
-			switch field.Type {
-			case bigquery.IntegerFieldType:
-				row[field.Name] = rawRow[field.Name].(int64)
-			case bigquery.StringFieldType:
-				row[field.Name] = rawRow[field.Name].(string)
-			case bigquery.BooleanFieldType:
-				row[field.Name] = rawRow[field.Name].(bool)
-			case bigquery.FloatFieldType:
-				row[field.Name] = rawRow[field.Name].(float64)
-			default:
-				row[field.Name] = rawRow[field.Name]
-			}
+			row[field.Name] = castField(field.Type, rawRow[field.Name])
 		}
 		rows = append(rows, row)
 	}
@@ -143,4 +113,53 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 	jsonStr, _ := json.Marshal(rows)
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(jsonStr)
+}
+
+func castField(fieldType bigquery.FieldType, v bigquery.Value) interface{} {
+	if v == nil {
+		return nil
+	}
+	switch fieldType {
+	case bigquery.IntegerFieldType:
+		return v.(int64)
+	case bigquery.StringFieldType:
+		return v.(string)
+	case bigquery.BooleanFieldType:
+		return v.(bool)
+	case bigquery.FloatFieldType:
+		return v.(float64)
+	}
+	return v
+}
+
+func buildQueryParams(config map[string]bigquery.FieldType, values url.Values) ([]bigquery.QueryParameter, error) {
+	params := []bigquery.QueryParameter{}
+
+	for key, fieldType := range config {
+		var v interface{}
+		var err error
+
+		// Convert the form input (string) into the native type before being passed to BiqQuery.
+		switch fieldType {
+		case bigquery.IntegerFieldType:
+			v, err = strconv.Atoi(values.Get(key))
+		case bigquery.BooleanFieldType:
+			v = (values.Get(key) == "true")
+		case bigquery.FloatFieldType:
+			v, err = strconv.ParseFloat(values.Get(key), 64)
+		default:
+			v = values.Get(key)
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		params = append(params, bigquery.QueryParameter{
+			Name:  key,
+			Value: v,
+		})
+	}
+
+	return params, nil
 }
