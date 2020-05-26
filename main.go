@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"cloud.google.com/go/bigquery"
@@ -16,15 +17,22 @@ import (
 type SQLQuery struct {
 	Name       string
 	SQL        string
-	Parameters []string
+	Parameters map[string]bigquery.FieldType
 }
 
 // Hardcode a sample query to test.
 var sqlQueries = map[string]SQLQuery{
 	"hello-world": {
-		Name:       "hello-world",
-		SQL:        "SELECT * FROM UNNEST([(1, -1, 'a', null), (2, 0, 'bravo', 1)]);",
-		Parameters: []string{},
+		Name: "hello-world",
+		SQL:  "SELECT * FROM UNNEST([(1, -1, 'a', null), (2, 0, 'bravo', 1)]);",
+	},
+	"param": {
+		Name: "param",
+		SQL:  "SELECT * FROM UNNEST([(@name, @id)]);",
+		Parameters: map[string]bigquery.FieldType{
+			"name": bigquery.StringFieldType,
+			"id":   bigquery.FloatFieldType,
+		},
 	},
 }
 
@@ -59,7 +67,28 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	values := r.URL.Query()
 	q := bqClient.Query(query.SQL)
+	for key, fieldType := range query.Parameters {
+		var v interface{}
+
+		switch fieldType {
+		case bigquery.IntegerFieldType:
+			v, _ = strconv.Atoi(values.Get(key))
+		case bigquery.BooleanFieldType:
+			v = (values.Get(key) == "true")
+		case bigquery.FloatFieldType:
+			v, _ = strconv.ParseFloat(values.Get(key), 64)
+		default:
+			v = values.Get(key)
+		}
+
+		q.Parameters = append(q.Parameters, bigquery.QueryParameter{
+			Name:  key,
+			Value: v,
+		})
+	}
+
 	it, err := q.Read(ctx)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
