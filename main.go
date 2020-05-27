@@ -3,11 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 
@@ -26,30 +27,37 @@ type SQLQuery struct {
 	Parameters map[string]bigquery.FieldType `yaml:"parameters"`
 }
 
+var (
+	projectName = flag.String("project", "", "Google Cloud Project to query BigQuery as.")
+	queries     = flag.String("queries", "queries.yaml", "YAML file with queries.")
+	urlPath     = flag.String("url_path", "/", "URL path refix for all queries, example: /query/.")
+	port        = flag.Int("port", 8080, "Port to serve on.")
+)
+
 var bqClient *bigquery.Client
 var sqlQueries = map[string]SQLQuery{}
 
 func main() {
 	ctx := context.Background()
+	flag.Parse()
 
-	projectName := os.Getenv("GCP_PROJECT")
-	if projectName == "" {
-		log.Fatalf("Missing project name, set GCP_PROJECT env variable.")
+	if *projectName == "" {
+		log.Fatalf("Empty project flag.")
 	}
 
 	var err error
-	if bqClient, err = bigquery.NewClient(ctx, projectName); err != nil {
+	if bqClient, err = bigquery.NewClient(ctx, *projectName); err != nil {
 		log.Fatalf("Error connecting to Bigquery: %v", err)
 	}
 
-	if sqlQueries, err = loadQueries("example.yaml"); err != nil {
-		log.Fatalf("Error loading queries: %v", err)
+	if sqlQueries, err = loadQueries(*queries); err != nil {
+		log.Fatalf("Error loading queries from %s: %v", *queries, err)
 	}
+	log.Printf("Loaded %d queries from %s.",
+		len(sqlQueries), *queries)
 
-	// TODO(bamnet): Move this "/query/"" to a config or flag.
-	http.HandleFunc("/query/", queryHandler)
-
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	http.HandleFunc(*urlPath, queryHandler)
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), nil))
 }
 
 func loadQueries(path string) (map[string]SQLQuery, error) {
@@ -74,7 +82,7 @@ func loadQueries(path string) (map[string]SQLQuery, error) {
 func queryHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	queryName := strings.TrimPrefix(r.URL.Path, "/query/")
+	queryName := strings.TrimPrefix(r.URL.Path, *urlPath)
 	query, ok := sqlQueries[queryName]
 	if !ok {
 		w.WriteHeader(http.StatusNotFound)
