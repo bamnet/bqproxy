@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -12,35 +13,21 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/iterator"
+	"gopkg.in/yaml.v2"
 )
 
 // SQLQuery represents a configured SQL query.
 type SQLQuery struct {
 	// The Name of the query, part of the URL used to call it.
-	Name string
+	Name string `yaml:"name"`
 	// The SQL function to run.
-	SQL string
+	SQL string `yaml:"query"`
 	// Named-parameters the SQL function expects, with their type information.
-	Parameters map[string]bigquery.FieldType
-}
-
-// Hardcode a sample query to test.
-var sqlQueries = map[string]SQLQuery{
-	"hello-world": {
-		Name: "hello-world",
-		SQL:  "SELECT * FROM UNNEST([(1, -1, 'a', null, true, 1.23), (2, 0, 'bravo', 1, false, -2/3)]);",
-	},
-	"param": {
-		Name: "param",
-		SQL:  "SELECT * FROM UNNEST([(@name, @id)]);",
-		Parameters: map[string]bigquery.FieldType{
-			"name": bigquery.StringFieldType,
-			"id":   bigquery.FloatFieldType,
-		},
-	},
+	Parameters map[string]bigquery.FieldType `yaml:"parameters"`
 }
 
 var bqClient *bigquery.Client
+var sqlQueries = map[string]SQLQuery{}
 
 func main() {
 	ctx := context.Background()
@@ -51,15 +38,37 @@ func main() {
 	}
 
 	var err error
-	bqClient, err = bigquery.NewClient(ctx, projectName)
-	if err != nil {
+	if bqClient, err = bigquery.NewClient(ctx, projectName); err != nil {
 		log.Fatalf("Error connecting to Bigquery: %v", err)
+	}
+
+	if sqlQueries, err = loadQueries("example.yaml"); err != nil {
+		log.Fatalf("Error loading queries: %v", err)
 	}
 
 	// TODO(bamnet): Move this "/query/"" to a config or flag.
 	http.HandleFunc("/query/", queryHandler)
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+func loadQueries(path string) (map[string]SQLQuery, error) {
+	dat, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	queries := []SQLQuery{}
+	if err := yaml.Unmarshal(dat, &queries); err != nil {
+		return nil, err
+	}
+
+	result := map[string]SQLQuery{}
+	for _, q := range queries {
+		result[q.Name] = q
+	}
+
+	return result, nil
 }
 
 func queryHandler(w http.ResponseWriter, r *http.Request) {
