@@ -1,0 +1,13 @@
+# hello-world returns some static data of varying types.
+- name: hello-world
+  query: 
+    SELECT *
+    FROM UNNEST([(100, -1, 'a', null, true, 1.23), (2, 0, 'bravo', 1, false, -2/3)]);
+
+# param allows users to specify a string and float as parameters.
+# Try it with a URL like /param?name=brian&id=1.23
+- name: param
+  query: SELECT * FROM UNNEST([(@name, @id)]);
+  parameters:
+    id: FLOAT
+    name: STRING
