@@ -1,4 +1,4 @@
-FROM docker.pkg.github.com/bamnet/bqproxy/bqproxy:latest
+FROM bamnet/bqproxy
 
 COPY example.yaml queries.yaml
 # TODO: Replace your-project-id with a Google Cloud Project that has BiqQuery enabled.
